@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import dataclasses
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from mbridge.core.bridge import Bridge
 from megatron.core import parallel_state as mpu
 from megatron.core import tensor_parallel
 from megatron.core.distributed import DistributedDataParallel as DDP
@@ -18,11 +17,19 @@ from areal.models.mcore.bailing_moe import (
     hf_to_mcore_config_bailing_moe,
     make_mcore_layer_specs_bailing_moe,
 )
+from areal.models.mcore.deepseek_v3 import (
+    _has_dsa,
+    hf_to_mcore_config_deepseek_v3,
+    make_mcore_layer_specs_deepseek_v3,
+)
 from areal.models.mcore.qwen3 import (
     hf_to_mcore_config_qwen3_dense,
     make_mcore_layer_specs_qwen3_dense,
 )
 from areal.utils import logging
+
+if TYPE_CHECKING:
+    from mbridge.core.bridge import Bridge
 
 logger = logging.getLogger("MCoreRegistry")
 
@@ -111,6 +118,49 @@ def unwrap_to_gpt_model(model: torch.nn.Module) -> GPTModel:
     raise TypeError(f"Model could not be unwrapped to GPTModel. Got {type(_model)}")
 
 
+_BAILING_ARCHITECTURES = {
+    "BailingMoeV2_5ForCausalLM",
+    "BailingMoeLinearForCausalLM",
+    "BailingHybridForCausalLM",
+}
+
+_DEEPSEEK_V3_ARCHITECTURES = {
+    "DeepseekV3ForCausalLM",
+    "GlmMoeDsaForCausalLM",
+    "Glm4MoeForCausalLM",
+}
+
+
+def _is_bailing(hf_config: PretrainedConfig) -> bool:
+    """Return True if hf_config belongs to the BailingMoeV2.5 family."""
+    architectures = getattr(hf_config, "architectures", None) or []
+    return bool(architectures) and architectures[0] in _BAILING_ARCHITECTURES
+
+
+def _supplement_dsa_config(hf_config: PretrainedConfig, tf_config) -> None:
+    """Backfill DSA-specific fields onto tf_config when applicable.
+
+    Megatron-Bridge's TransformerConfig does not natively include DSA
+    (Dynamic Sparse Attention) parameters. When the model is DSA-enabled,
+    copy the indexer settings from the HF config so DSAMLASelfAttention
+    can be constructed correctly.
+    """
+    if not _has_dsa(hf_config):
+        return
+    dsa_attrs = {
+        "dsa_indexer_n_heads": hf_config.index_n_heads,
+        "dsa_indexer_head_dim": hf_config.index_head_dim,
+        "dsa_indexer_topk": hf_config.index_topk,
+        "dsa_indexer_loss_coeff": getattr(hf_config, "dsa_indexer_loss_coeff", 0.0),
+        "dsa_indexer_use_sparse_loss": getattr(
+            hf_config, "dsa_indexer_use_sparse_loss", False
+        ),
+    }
+    for attr, val in dsa_attrs.items():
+        if getattr(tf_config, attr, None) is None:
+            setattr(tf_config, attr, val)
+
+
 # Model registry for different architectures
 def make_hf_and_mcore_config(
     hf_path: str,
@@ -126,7 +176,9 @@ def make_hf_and_mcore_config(
         hf_config = getattr(bridge.hf_pretrained, "config", bridge.hf_pretrained)
         if hasattr(hf_config, "_name_or_path"):
             hf_config._name_or_path = hf_path
-        return hf_config, bridge.transformer_config
+        tf_config = bridge.transformer_config
+        _supplement_dsa_config(hf_config, tf_config)
+        return hf_config, tf_config
     else:
         hf_config: PretrainedConfig = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=hf_path,
@@ -136,12 +188,10 @@ def make_hf_and_mcore_config(
         architecture = hf_config.architectures[0]
         if architecture == "Qwen3ForCausalLM":
             return hf_config, hf_to_mcore_config_qwen3_dense(hf_config, dtype)
-        elif architecture in (
-            "BailingMoeV2_5ForCausalLM",
-            "BailingMoeLinearForCausalLM",
-            "BailingHybridForCausalLM",
-        ):
+        elif architecture in _BAILING_ARCHITECTURES:
             return hf_config, hf_to_mcore_config_bailing_moe(hf_config, dtype)
+        elif architecture in _DEEPSEEK_V3_ARCHITECTURES:
+            return hf_config, hf_to_mcore_config_deepseek_v3(hf_config, dtype)
         else:
             raise ValueError(
                 f"Architecture not registered for config conversion: {architecture}."
@@ -153,12 +203,10 @@ def make_mcore_layer_specs(hf_config: PretrainedConfig, tf_config: TransformerCo
     architecture = hf_config.architectures[0]
     if architecture == "Qwen3ForCausalLM":
         return make_mcore_layer_specs_qwen3_dense(tf_config, use_te=True)
-    elif architecture in (
-        "BailingMoeV2_5ForCausalLM",
-        "BailingMoeLinearForCausalLM",
-        "BailingHybridForCausalLM",
-    ):
+    elif architecture in _BAILING_ARCHITECTURES:
         return make_mcore_layer_specs_bailing_moe(tf_config, hf_config, use_te=True)
+    elif architecture in _DEEPSEEK_V3_ARCHITECTURES:
+        return make_mcore_layer_specs_deepseek_v3(tf_config, hf_config, use_te=True)
     else:
         raise ValueError(
             f"Architecture not registered for config conversion: {architecture}."
@@ -169,7 +217,7 @@ def make_mcore_model(
     hf_config: PretrainedConfig,
     tf_config: TransformerConfig,
     mcore_config: MegatronEngineConfig | None = None,
-    bridge: Bridge | Any | None = None,
+    bridge: "Bridge | Any | None" = None,
     bridge_type: str = "mbridge",
     is_critic: bool = False,
     use_lora: bool = False,
@@ -200,6 +248,23 @@ def make_mcore_model(
         provider = bridge.to_megatron_provider(load_weights=False)
         vpp_size = mcore_config.virtual_pipeline_parallel_size or 0
 
+        # Override the bridge's default layer spec when AReaL needs custom
+        # attention modules that megatron-bridge does not provide:
+        #   * DSA models (GLM-5.1): need DSAMLASelfAttention with indexer.
+        #   * Bailing-MoE V2.5: per-layer heterogeneous Lightning + MLA.
+        # The lambda matches megatron-bridge's call signature
+        # ``(config, vp_stage=None) -> TransformerBlockSubmodules``.
+        if _has_dsa(hf_config):
+            _dsa_specs = make_mcore_layer_specs(hf_config, tf_config)
+            provider.transformer_layer_spec = (
+                lambda config, vp_stage=None, _s=_dsa_specs: _s
+            )
+        elif _is_bailing(hf_config):
+            _bailing_specs = make_mcore_layer_specs(hf_config, tf_config)
+            provider.transformer_layer_spec = (
+                lambda config, vp_stage=None, _s=_bailing_specs: _s
+            )
+
         provider.tensor_model_parallel_size = mpu.get_tensor_model_parallel_world_size()
         provider.pipeline_model_parallel_size = (
             mpu.get_pipeline_model_parallel_world_size()
@@ -226,6 +291,12 @@ def make_mcore_model(
         provider.account_for_embedding_in_pipeline_split = False
         provider.account_for_loss_in_pipeline_split = False
 
+        # Pass through custom pipeline layout when the architecture-specific
+        # config converter sets one (e.g., DeepSeek V3 uneven PP partitioning).
+        pp_layout = getattr(tf_config, "pipeline_model_parallel_layout", None)
+        if pp_layout is not None:
+            provider.pipeline_model_parallel_layout = pp_layout
+
         # LoRA params are injected after model materialization and do not carry
         # Megatron main_grad buffers required by fused grad accumulation kernels.
         if use_lora:
@@ -233,11 +304,13 @@ def make_mcore_model(
 
         # Keep these four flags aligned with mbridge base defaults.
         provider.variable_seq_lengths = True
-        logger.warning(
-            "Ignoring mcore_config.moe_token_dispatcher_type=%s for bridge_type='megatron-bridge'; "
-            "using 'alltoall' and variable_seq_lengths=True.",
-            mcore_config.moe_token_dispatcher_type,
-        )
+        if mcore_config.moe_token_dispatcher_type != "alltoall":
+            logger.info(
+                "Ignoring mcore_config.moe_token_dispatcher_type=%s for "
+                "bridge_type='megatron-bridge'; using 'alltoall' and "
+                "variable_seq_lengths=True.",
+                mcore_config.moe_token_dispatcher_type,
+            )
         provider.moe_token_dispatcher_type = "alltoall"
         provider.batch_p2p_comm = False
         provider.overlap_p2p_comm = (
