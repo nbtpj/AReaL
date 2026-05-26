@@ -48,7 +48,7 @@ HEALTH_POLL_INTERVAL_S = 0.5
 
 def _spawn(cmd: list[str], log_file: Path) -> subprocess.Popen:
     log_file.parent.mkdir(parents=True, exist_ok=True)
-    lf = open(log_file, "ab", buffering=0)
+    lf = open(log_file, "wb", buffering=0)
     return subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,

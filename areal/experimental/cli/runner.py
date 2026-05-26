@@ -250,7 +250,7 @@ def start_background(
         cmd.append("--")
         cmd.extend(overrides)
 
-    with open(log_file, "ab", buffering=0) as lf:
+    with open(log_file, "wb", buffering=0) as lf:
         # Force unbuffered stdout/stderr in the child so early crashes
         # (ImportError, segfault) still flush a useful traceback to the log.
         env = os.environ.copy()
