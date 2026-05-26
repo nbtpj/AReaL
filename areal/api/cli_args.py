@@ -25,7 +25,13 @@ from omegaconf import MISSING, DictConfig, OmegaConf
 # SchedulingStrategy``. Doing it at the top would trap that lookup with
 # ``cli_args`` partially initialized, so we defer it past the affected
 # definitions.
-from areal.utils import logging, name_resolve, pkg_version
+from areal.utils import logging, pkg_version
+
+# NOTE: ``areal.utils.name_resolve`` pulls ``areal.utils.timeutil`` which
+# pulls ``areal.infra.platforms`` → all of ``areal.infra``, which in turn
+# imports back into ``areal.api`` lazily and tries to resolve
+# ``SchedulingStrategy`` from this partially-initialized module. It's only
+# used inside ``parse_cli_args`` below, so import it there instead.
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
     PROX_LOGP_METHODS_ALL,
@@ -3001,6 +3007,8 @@ def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[Config
     assert isinstance(cfg, config_cls)
 
     # Setup environment
+    from areal.utils import name_resolve
+
     name_resolve.reconfigure(cfg.cluster.name_resolve)
 
     from areal.utils.stats_logger import StatsLogger
