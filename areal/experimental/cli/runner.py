@@ -202,7 +202,13 @@ def run_foreground(
         if isinstance(result, int):
             rc = result
     except SystemExit as e:
-        rc = int(e.code) if isinstance(e.code, int) else 1
+        if isinstance(e.code, int):
+            rc = e.code
+        elif e.code is not None:
+            print(str(e.code), file=sys.stderr)
+            rc = 1
+        else:
+            rc = 0
     except BaseException:
         state.status = "failed"
         state.save()
@@ -245,13 +251,17 @@ def start_background(
         cmd.extend(overrides)
 
     with open(log_file, "ab", buffering=0) as lf:
+        # Force unbuffered stdout/stderr in the child so early crashes
+        # (ImportError, segfault) still flush a useful traceback to the log.
+        env = os.environ.copy()
+        env.setdefault("PYTHONUNBUFFERED", "1")
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=lf,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            env=os.environ.copy(),
+            env=env,
         )
 
     state = RunState(

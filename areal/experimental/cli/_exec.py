@@ -48,7 +48,13 @@ def main(argv: list[str] | None = None) -> int:
         if isinstance(result, int):
             rc = result
     except SystemExit as e:
-        rc = int(e.code) if isinstance(e.code, int) else 1
+        if isinstance(e.code, int):
+            rc = e.code
+        elif e.code is not None:
+            print(str(e.code), file=sys.stderr)
+            rc = 1
+        else:
+            rc = 0
     except BaseException:
         _update_status(args.name, "failed")
         raise

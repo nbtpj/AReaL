@@ -27,6 +27,13 @@ def __getattr__(name: str):
         globals()[name] = val
         return val
     if name in _LAZY_TRAINERS:
+        # Eager-load `infra` first. This forces the import order that the old
+        # top-level `from .infra import ...` used to guarantee, and sidesteps
+        # a circular import between `areal.api.engine_api` and
+        # `areal.api.alloc_mode` that surfaces when the trainer stack pulls
+        # `areal.api` before `areal.infra` is on the import stack.
+        from . import infra  # noqa: F401
+
         from .trainer import DPOTrainer, PPOTrainer, RWTrainer, SFTTrainer
 
         _map = {
