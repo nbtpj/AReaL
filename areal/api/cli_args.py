@@ -16,11 +16,15 @@ from hydra import initialize as hydra_init
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import MISSING, DictConfig, OmegaConf
 
-from areal.engine.fsdp_utils.attn_impl import (
-    BUILTIN_ATTN_IMPLS,
-    get_attn_impl_validation_error,
-    is_valid_attn_impl,
-)
+# NOTE: The import of attn_impl symbols is deferred to *after*
+# ``SchedulingStrategy`` / ``SchedulingStrategyType`` are defined below
+# (see the `from areal.engine.fsdp_utils.attn_impl import ...` block lower
+# in this file). It pulls ``fsdp_utils.optimizer`` → ``areal.infra`` →
+# ``rollout_controller`` → ``areal.api.engine_api`` →
+# ``areal.api.alloc_mode`` → ``from areal.api.cli_args import
+# SchedulingStrategy``. Doing it at the top would trap that lookup with
+# ``cli_args`` partially initialized, so we defer it past the affected
+# definitions.
 from areal.utils import logging, name_resolve, pkg_version
 from areal.utils.constants import (
     PROX_LOGP_METHOD_RECOMPUTE,
@@ -963,6 +967,18 @@ class SchedulingStrategy:
             "Provides process isolation while sharing GPU resources."
         },
     )
+
+
+# Deferred to here (not the top of the file) to break a circular import:
+# cli_args → fsdp_utils.attn_impl → fsdp_utils.optimizer → areal.infra →
+# rollout_controller → areal.api.engine_api → alloc_mode →
+# `from areal.api.cli_args import SchedulingStrategy`. The class above must
+# already exist by the time `alloc_mode` is loaded.
+from areal.engine.fsdp_utils.attn_impl import (  # noqa: E402
+    BUILTIN_ATTN_IMPLS,
+    get_attn_impl_validation_error,
+    is_valid_attn_impl,
+)
 
 
 @dataclass
