@@ -27,7 +27,7 @@ model_name=${MODEL_PATH:-/storage/openpsi/models/lcy_image_edit/sft_workspace/qw
 
 train_data="[$WORKSPACE/train_v2_0528.parquet]"
 val_data="[$WORKSPACE/val_origimg_with_omnispatial.parquet]"
-run_name="mixed-atgigpo-v2-0526"
+run_name="mixed-atgigpo-v2-0528"
 rl_alg=gigpo
 gigpo_sim_threshold=0.9
 # ---- Cluster topology ----
@@ -64,8 +64,8 @@ reward_manager=geo_vision_qa
 # ---- Training ----
 strategy="fsdp2"
 lr=7e-7
-kl_loss_coef=0.001
-kl_coef=0.0
+kl_loss_coef=0.0
+kl_coef=0.003
 entropy_coeff=0
 kl_loss_type=low_var_kl
 
@@ -175,7 +175,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     actor_rollout_ref.actor.use_dynamic_bsz=$use_dynamic_bsz \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=$ppo_max_token_len_per_gpu \
-    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.strategy=$strategy \
     actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
     actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
@@ -229,7 +229,7 @@ PYTHONUNBUFFERED=1 python3 -m verl_tool.trainer.main_ppo \
     critic.ppo_micro_batch_size_per_gpu=$ppo_micro_batch_size_per_gpu \
     critic.ulysses_sequence_parallel_size=$ulysses_sequence_parallel_size \
     algorithm.kl_ctrl.kl_coef=$kl_coef \
-    algorithm.use_kl_in_reward=False \
+    algorithm.use_kl_in_reward=True \
     +algorithm.overturn_masking=False \
     trainer.logger=['console','wandb'] \
     trainer.project_name=mixed_rl \
