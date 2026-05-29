@@ -6,8 +6,8 @@ Two ready-to-run experiments:
 
 | Run | Dataset | Samples | Config | Launcher | Output (trained model) |
 |---|---|---:|---|---|---|
-| **v1** | `pedia_8b_SFT_v1` | 10,661 | [`configs/pedia_8b_SFT_v1.yaml`](configs/pedia_8b_SFT_v1.yaml) | [`train_v1.sh`](train_v1.sh) | [`pedia_model/pedia_8b_SFT_v1/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_8b_SFT_v1) |
-| **v2** | `pedia_8b_SFT_v2` | 13,398 | [`configs/pedia_8b_SFT_v2.yaml`](configs/pedia_8b_SFT_v2.yaml) | [`train_v2.sh`](train_v2.sh) | [`pedia_model/pedia_8b_SFT_v2/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_8b_SFT_v2) |
+| **v1** | `pedia_sft_v1` | 10,661 | [`configs/pedia_sft_v1.yaml`](configs/pedia_sft_v1.yaml) | [`train_v1.sh`](train_v1.sh) | [`pedia_model/pedia_sft_v1/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_sft_v1) |
+| **v2** | `pedia_sft_v2` | 13,398 | [`configs/pedia_sft_v2.yaml`](configs/pedia_sft_v2.yaml) | [`train_v2.sh`](train_v2.sh) | [`pedia_model/pedia_sft_v2/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_sft_v2) |
 
 Both runs use DeepSpeed ZeRO-2, read from the consolidated `pedia_data/` layout, and ship with three production patches needed for safe multimodal training (see [Patches](#patches)).
 
@@ -22,8 +22,8 @@ llamafactory/
 ├── train_v2.sh                                               (single-machine 8-GPU launcher, v2)
 ├── configs/
 │   ├── ds_z2_config.json                                     (DeepSpeed ZeRO-2 settings)
-│   ├── pedia_8b_SFT_v1.yaml
-│   └── pedia_8b_SFT_v2.yaml
+│   ├── pedia_sft_v1.yaml
+│   └── pedia_sft_v2.yaml
 └── logs/                                                     (auto-created at run time)
 ```
 
@@ -96,10 +96,10 @@ Both YAMLs expect the consolidated `pedia_data/` dataset layout (already in plac
 
 | Run | `dataset_dir` |
 |---|---|
-| v1 | `/storage/openpsi/data/lcy_image_edit/pedia_data/pedia_8b_SFT_v1/` |
-| v2 | `/storage/openpsi/data/lcy_image_edit/pedia_data/pedia_8b_SFT_v2/` |
+| v1 | `/storage/openpsi/data/lcy_image_edit/pedia_data/pedia_sft_v1/` |
+| v2 | `/storage/openpsi/data/lcy_image_edit/pedia_data/pedia_sft_v2/` |
 
-Each folder contains `train.json` + `dataset_info.json` (whose top-level key matches the dataset name, e.g. `pedia_8b_SFT_v1`). All image paths inside `train.json` are absolute paths under `/storage/openpsi/data/lcy_image_edit/pedia_data/images/<source>/`.
+Each folder contains `train.json` + `dataset_info.json` (whose top-level key matches the dataset name, e.g. `pedia_sft_v1`). All image paths inside `train.json` are absolute paths under `/storage/openpsi/data/lcy_image_edit/pedia_data/images/<source>/`.
 
 Base model (referenced by both YAMLs):
 
@@ -111,8 +111,8 @@ Each run's `output_dir` points at the canonical model archive under `pedia_model
 
 | Model | Origin | Tokenizer |
 |---|---|---|
-| [`pedia_model/pedia_8b_SFT_v1/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_8b_SFT_v1) | exported from former `sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280/` | as-trained, byte-identical to base Qwen3-VL-8B-Thinking |
-| [`pedia_model/pedia_8b_SFT_v2/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_8b_SFT_v2) | exported from former `sft_workspace/qwen3vl8b-thinking-5ds-v4-0526-ct65536-lr1e5/checkpoint-419/` | re-aligned to base after migration (same `vocab_size=151936`, more compact serialization) |
+| [`pedia_model/pedia_sft_v1/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_sft_v1) | exported from former `sft_workspace/qwen3vl8b-thinking-5ds-v2-0419-ct65536/checkpoint-280/` | as-trained, byte-identical to base Qwen3-VL-8B-Thinking |
+| [`pedia_model/pedia_sft_v2/`](file:///storage/openpsi/data/lcy_image_edit/pedia_model/pedia_sft_v2) | exported from former `sft_workspace/qwen3vl8b-thinking-5ds-v4-0526-ct65536-lr1e5/checkpoint-419/` | re-aligned to base after migration (same `vocab_size=151936`, more compact serialization) |
 
 Re-running `train_v{1,2}.sh` will write new `checkpoint-N/` subdirs into these same dirs (auto-resume picks up the latest if present). Override `output_dir=...` via the `--` CLI mechanism (below) if you want a fresh location.
 

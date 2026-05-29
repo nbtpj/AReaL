@@ -1,7 +1,7 @@
 #!/bin/bash
-# Single-machine 8-GPU SFT for pedia_8b_SFT_v2.
-# Dataset: pedia_data/pedia_8b_SFT_v2/
-# Model output: pedia_model/pedia_8b_SFT_v2/
+# Single-machine 8-GPU SFT for pedia_sft_v2.
+# Dataset: pedia_data/pedia_sft_v2/
+# Model output: pedia_model/pedia_sft_v2/
 #
 # Overrides (env or CLI):
 #   NPROC=<n>        : GPUs per node            (default 8)
@@ -15,10 +15,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-CFG="configs/pedia_8b_SFT_v2.yaml"
+CFG="configs/pedia_sft_v2.yaml"
 LOG_DIR="${SCRIPT_DIR}/logs"
 mkdir -p "${LOG_DIR}"
-LOG_FILE="${LOG_DIR}/pedia_8b_SFT_v2.$(date '+%Y%m%d_%H%M%S').log"
+LOG_FILE="${LOG_DIR}/pedia_sft_v2.$(date '+%Y%m%d_%H%M%S').log"
 
 NPROC="${NPROC:-8}"
 MASTER_PORT="${MASTER_PORT:-29502}"

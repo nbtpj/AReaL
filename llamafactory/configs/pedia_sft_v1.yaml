@@ -14,8 +14,8 @@ freeze_vision_tower: true
 freeze_multi_modal_projector: true
 freeze_language_model: false
 
-dataset_dir: /storage/openpsi/data/lcy_image_edit/pedia_data/pedia_8b_SFT_v1
-dataset: pedia_8b_SFT_v1
+dataset_dir: /storage/openpsi/data/lcy_image_edit/pedia_data/pedia_sft_v1
+dataset: pedia_sft_v1
 template: qwen3_vl
 cutoff_len: 65536
 preprocessing_num_workers: 32
