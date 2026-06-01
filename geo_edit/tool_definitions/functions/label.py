@@ -4,7 +4,19 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-_FONT_PATH = Path(__file__).parent.parent.parent / "assets" / "fonts" / "arial.ttf"
+_FONT_CANDIDATES = [
+    Path(__file__).parent.parent.parent / "assets" / "fonts" / "arial.ttf",
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+]
+
+
+def _resolve_font_path() -> str | None:
+    for p in _FONT_CANDIDATES:
+        if p.exists():
+            return str(p)
+    return None
+
 
 DECLARATION = {
     "name": "image_label",
@@ -39,6 +51,10 @@ def execute(image_list, image_index: int, text: str | list, position: str) -> st
     width, height = image_to_label.size
     coords = position.strip("()").split(",")
     x, y = int(int(coords[0]) * width / 1000), int(int(coords[1]) * height / 1000)
-    font = ImageFont.truetype(str(_FONT_PATH), 30)
+    font_path = _resolve_font_path()
+    if font_path is not None:
+        font = ImageFont.truetype(font_path, 30)
+    else:
+        font = ImageFont.load_default()
     draw.text((x, y), text, fill="red", font=font)
     return image_to_label

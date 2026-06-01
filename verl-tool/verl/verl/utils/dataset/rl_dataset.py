@@ -153,6 +153,29 @@ class RLHFDataset(Dataset):
         dataframes = []
         for parquet_file in self.data_files:
             dataframe = datasets.load_dataset("parquet", data_files=parquet_file)["train"]
+            # Resolve relative image paths against the parquet directory so the
+            # downstream process_image() call in vision_utils can Image.open()
+            # them regardless of the trainer's cwd. Without this, parquets that
+            # store image paths as e.g. "images/foo/bar.jpg" (relative to the
+            # parquet) crash with FileNotFoundError when the trainer is launched
+            # from a different cwd (e.g. the repo root).
+            parquet_dir = os.path.dirname(os.path.realpath(parquet_file))
+            image_key = self.image_key
+            if image_key in dataframe.column_names:
+                def _absolutize(row, _dir=parquet_dir, _k=image_key):
+                    imgs = row.get(_k)
+                    if imgs:
+                        for img in imgs:
+                            if (
+                                isinstance(img, dict)
+                                and img.get("path")
+                                and not os.path.isabs(img["path"])
+                            ):
+                                abs_p = os.path.join(_dir, img["path"])
+                                if os.path.exists(abs_p):
+                                    img["path"] = abs_p
+                    return row
+                dataframe = dataframe.map(_absolutize)
             dataframes.append(dataframe)
         self.dataframe: datasets.Dataset = datasets.concatenate_datasets(dataframes)
 

@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,9 +16,11 @@ logger = setup_logger(__name__)
 # GroundingDINO doesn't need a system prompt (not a language model)
 SYSTEM_PROMPT = ""
 
+_PEDIA_MODEL = os.environ.get("PEDIA_MODEL", "./pedia_model")
+
 # Model configuration
 agent_config = {
-    "model_name_or_path": "./pedia_model/grounding-dino-base",
+    "model_name_or_path": f"{_PEDIA_MODEL}/grounding-dino-base",
     "num_gpus": 1,
 }
 

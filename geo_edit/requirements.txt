@@ -18,32 +18,22 @@ torchaudio
 
 # === Inference / model loaders ===
 vllm==0.17.0
-git+https://github.com/huggingface/transformers.git@b3e3c3d
+# transformers 4.57.1 is the cap accepted by both vllm 0.17 and llamafactory 0.9.4;
+# the verl-tool RL stack (vllm 0.11) uses a newer commit (b3e3c3d) instead.
+transformers==4.57.1
+# Required by grounding_dino's AutoModelForZeroShotObjectDetection.from_pretrained(device_map=...).
+# Pinned at 1.11.0 to coexist with llamafactory 0.9.4 (caps accelerate<=1.11.0,>=1.3.0).
+accelerate==1.11.0
 
 # === Reinforcement-learning environments (geo_edit env wrappers) ===
 gymnasium
-
-# === Vision / model APIs ===
-google-genai
-qwen_vl_utils
-qwen_omni_utils
-
-# === OCR backend used by paddleocr-based tools ===
-paddleocr
-paddlepaddle-gpu
 
 # === Vision / preprocessing helpers ===
 pillow
 iopath
 ftfy
 timm
-
-# === Numeric / classical ML used in evaluation ===
-scikit-learn
-mathruler
-
-# === Monitoring ===
-nvitop
+open_clip_torch
 
 # === Editable install of this repo (Ray actors need geo_edit importable) ===
 -e .

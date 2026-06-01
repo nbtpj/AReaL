@@ -40,6 +40,10 @@ MAX_IMAGES_PER_PROMPT="${MAX_IMAGES_PER_PROMPT:-5}"
 EXTRA_VLLM_ARGS="${EXTRA_VLLM_ARGS:-}"
 VLLM_LOG="${VLLM_LOG:-/tmp/log/vllm_${MODEL_NAME}.log}"
 
+# ─── tool config (overridable via env) ───
+USE_TOOLS="${USE_TOOLS:-auto}"
+ENABLE_TOOLS="${ENABLE_TOOLS:-map general}"
+
 mkdir -p "$OUT_DIR" "$(dirname "$VLLM_LOG")"
 
 # ─── 1. Background-launch vLLM ───
@@ -83,7 +87,7 @@ python -m geo_edit.scripts.async_generate_with_tool_call_api \
     --model_name_or_path "$MODEL_PATH" \
     --model_type vLLM --api_base "$API_BASE" \
     --temperature 0 --sample_rate 1.0 \
-    --use_tools auto --enable_tools map general \
+    --use_tools "$USE_TOOLS" --enable_tools $ENABLE_TOOLS \
     --max_concurrent_requests 16 --max_tool_calls 10 \
     --no_image_compression
 

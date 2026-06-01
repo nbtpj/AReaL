@@ -29,17 +29,15 @@ install_requires = [
     "timm",
     "iopath",
     "ftfy",
-    "qwen_omni_utils",
+    "open_clip_torch",
     # Misc helpers
-    "tensordict",
-    "codetiming",
-    "nvitop",
     "regex",
     "tqdm",
     "pyyaml",
     # Model loaders (pinned in requirements.txt for exact versions)
     "vllm",
     "transformers",
+    "accelerate",
 ]
 
 extras_require = {

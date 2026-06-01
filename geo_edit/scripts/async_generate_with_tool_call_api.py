@@ -602,6 +602,8 @@ def main():
                         else []
                     )
 
+                    _parquet_dir = os.path.dirname(os.path.realpath(args.dataset_path))
+
                     def _save_one(img, path):
                         if isinstance(img, Image.Image):
                             img.save(path)
@@ -623,6 +625,11 @@ def main():
                         elif isinstance(img, str) and os.path.exists(img):
                             import shutil
                             shutil.copy2(img, path)
+                        elif isinstance(img, str) and os.path.exists(
+                            os.path.join(_parquet_dir, img)
+                        ):
+                            import shutil
+                            shutil.copy2(os.path.join(_parquet_dir, img), path)
                         elif isinstance(img, str):
                             import base64
                             Image.open(BytesIO(base64.b64decode(img))).save(path)

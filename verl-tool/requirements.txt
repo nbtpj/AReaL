@@ -1,6 +1,6 @@
 # verl-tool RL training environment.
 #
-#                  (provides torch 2.8.0 + CUDA 12.8 + Python 3.12 baseline)
+#                  (provides torch 2.8.0 + CUDA 12.8 + Python 3.11/3.12 baseline)
 #
 # === One-step install (run from this repo root) ===
 #   cd verl-tool
@@ -15,24 +15,46 @@
 #   # ~10-15 min WITH them.
 #   # (TORCH_CUDA_ARCH_LIST is ignored by flash-attn setup.py, but listed
 #   # for completeness.)
+#   # --no-build-isolation passed as a CLI flag (NOT inside requirements.txt
+#   # — pip 23+ rejects it as "no such option" when it appears as a bare line).
 #   TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=48 NVCC_THREADS=4 \
-#       pip install -r requirements.txt
+#       pip install --no-build-isolation -r requirements.txt
 #
-# === Verification status (live smoke) ===
-#   ✓ TaskRunner started, 8 WorkerDicts created, actor+critic loaded
-#     to ~87 GB/GPU, reward manager (geo_vision_qa) ready, vLLM rollout
-#     configured, entered "Training Progress: 0/1" loop.
-#   ✗ Failed inside vllm 0.11 mm processing
-#     ("Failed to apply prompt replacement for mm_items['image'][0]") —
-#     a data/model issue (Qwen3-VL prompt tokens vs. vllm 0.11's mm
-#     pattern matcher), NOT an environment issue. Production runs that
-#     feed pre-tokenised prompts avoid it.
+#   # If flash-attn import later fails with "undefined symbol: _ZN3c104cuda...",
+#   # the cached wheel was built against an older torch. Force a clean rebuild:
+#   pip uninstall -y flash-attn
+#   find /root/.cache/pip -name "flash_attn*" -delete
+#   TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=48 NVCC_THREADS=4 \
+#       pip install --no-cache-dir --no-build-isolation flash-attn==2.7.4.post1
+#
+# === Data prep ===
+#   RL data ships as a tar under ./pedia_data/pedia_rl_v1.tar; extract it:
+#       mkdir -p ./pedia_data && tar -xf ./pedia_data/pedia_rl_v1.tar -C ./pedia_data
+#   Result: ./pedia_data/pedia_rl_v1/{train,val}.parquet + images/
+#
+# === Verification status (live smoke, 1 node x 8 L20X) ===
+#   ✓ Install + flash-attn build + Ray bootstrap + 8B SFT FSDP load
+#   ✓ Connected to remote tool server (HTTP) and ran 4 PPO training steps
+#     end-to-end. Per-step metrics:
+#       - verl_tool/tool_call_success/mean = 1.0 (every tool call succeeded)
+#       - verl_tool/num_turns/mean ≈ 2.4 (multi-turn trajectories)
+#       - reward/score/mean ≈ 1.34-1.48, throughput ≈ 414-538 tok/s
+#       - per-step wall time ≈ 53-69 s
+#   See AGENTS.md gotcha #4 for the eval-vs-RL transport split
+#   (eval inference uses Ray actors; RL uses the HTTP TOOL_SERVER_URL).
 #
 # === DO NOT install (verified incompatible with torch 2.8 baseline) ===
 #   deep_ep           : .so compiled against torch 2.10 — undefined symbol
 #   deep_gemm         : same root cause as deep_ep
 # Both must stay un-installed; if pulled in as transitive deps, uninstall:
 #   pip uninstall -y deep_ep deep_gemm
+#
+# === pyext caveat ===
+#   pyext (used only by verl/utils/reward_score/prime_code/testing_util.py)
+#   does not install on Python 3.11+ (uses removed inspect.getargspec).
+#   Removed from this stack's pyproject.toml `dependencies`. If you need the
+#   PRIME-code reward scorer specifically, install pyext separately on
+#   Python <=3.10 and re-add it to pyproject.toml.
 
 # === Torch stack — pin so vllm wheel doesn't silently bump ===
 torch==2.8.0
@@ -47,8 +69,8 @@ vllm==0.11.0
 # Exact transformers commit needed by Qwen3-VL-Thinking; not on PyPI.
 git+https://github.com/huggingface/transformers.git@b3e3c3d
 
-# === Attention backend — built from source (uses MAX_JOBS/NVCC_THREADS env vars above) ===
---no-build-isolation
+# === Attention backend — built from source (uses MAX_JOBS/NVCC_THREADS env vars above;
+#     install MUST pass --no-build-isolation as a CLI flag, see header) ===
 flash-attn==2.7.4.post1
 
 # === RL / training stack ===

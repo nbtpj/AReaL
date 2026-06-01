@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Ensure geo_edit package is importable
 _AREAL_ROOT = os.environ.get(
     "AREAL_ROOT",
-    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")),
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
 )
 if _AREAL_ROOT not in sys.path:
     sys.path.insert(0, _AREAL_ROOT)

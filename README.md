@@ -106,14 +106,13 @@ pip install -U huggingface_hub
 
 ## Evaluation
 
-PERIA evaluation = **vLLM serving the PERIA model + tool server providing 18
-tools (3 GPU agents + 6 CPU function tools) + the eval driver
-`async_generate_with_tool_call_api.py`**.
+PERIA evaluation = **vLLM serving the PERIA model + the eval driver
+`async_generate_with_tool_call_api.py`** (which calls the geo_edit tools as
+Ray actors when `--use_tools auto`).
 
 [`run_inference.sh`](file:///storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/geo_edit/scripts/run_inference.sh)
 auto-launches vLLM with `DP=8` (all 8 local GPUs) in the background, then runs
-inference, then stops vLLM on exit. Because vLLM claims all 8 GPUs, the tool
-server runs on a **separate node** — same 2-node minimum as RL training.
+inference, then stops vLLM on exit.
 
 ### Download — PERIA-8B + tool backends + the eval dataset you want
 
@@ -134,47 +133,50 @@ hf download <your-org>/PERIA-Data --repo-type dataset \
     --local-dir ./pedia_data
 ```
 
+> **Alternative — internal tar distribution**: if you received the eval data as
+> `./pedia_data/eval/{id_data,ood_data}.tar` instead, extract and bridge to the
+> registry layout:
+> ```bash
+> tar -xf ./pedia_data/eval/id_data.tar -C ./pedia_data/eval
+> mkdir -p ./pedia_data/eval/id
+> for ds in ./pedia_data/eval/id_data/*/; do
+>     name=$(basename "$ds")
+>     ln -sfn "../id_data/${name}/val.parquet" "./pedia_data/eval/id/${name}.parquet"
+> done
+> # Repeat with ood_data.tar + ood/ if you need OOD benchmarks.
+> ```
+
 ### Env setup — `peria-tools` (torch ≥ 2.10 + vllm 0.17)
 
 ```bash
-conda create -n peria-tools python=3.12 -y
+conda create -n peria-tools python=3.11 -y
 conda activate peria-tools
 cd geo_edit          && pip install -U -r requirements.txt && cd ..
 cd train_tool_server && pip install -r requirements.txt    && cd ..
 ```
 
-### 1 ─ Tool server on Node A (all 8 GPUs)
+### Run inference (auto-launches vLLM DP=8)
 
 ```bash
 conda activate peria-tools
 unset ROCR_VISIBLE_DEVICES
+
+# Ray head with the tool_agent resource that the inference driver schedules its
+# tool actors on. The driver spawns Ray actors (PaddleOCR/SAM3/Grounding-DINO/
+# CPU functions) on demand; no separate HTTP tool server is required for eval.
 ray start --head --port=6379 --num-gpus=8 --resources='{"tool_agent": 8}'
-
-# Spawns paddleocr (2 replicas) + sam3 + grounding_dino + geo_edit_function (CPU)
-# backends and a tool-aware router on port 30888.
-bash train_tool_server/scripts/launch_tool_server.sh
-
-# Note Node A's reachable IP for Node B
-echo "Node A IP for Ray join: $(hostname -I | awk '{print $1}'):6379"
-```
-
-### 2 ─ Run inference on Node B (auto-launches vLLM DP=8)
-
-```bash
-conda activate peria-tools
-unset ROCR_VISIBLE_DEVICES
-ray start --address=<node-a-ip>:6379          # join Node A's Ray cluster
 
 # Defaults to DATASET=visual_probe_easy. The script launches vLLM (DP=8),
 # waits for the endpoint, runs inference, then kills vLLM on exit.
 # Dataset id auto-resolves to its parquet path + eval template via the
 # geo_edit.eval_datasets.DATASET_REGISTRY.
 bash geo_edit/scripts/run_inference.sh
-# DATASET=reason_map bash geo_edit/scripts/run_inference.sh    # any registered id
-# DP_SIZE=4 VLLM_PORT=8001 bash geo_edit/scripts/run_inference.sh  # tweak vLLM
+# DATASET=reason_map bash geo_edit/scripts/run_inference.sh             # any registered id
+# DP_SIZE=4 VLLM_PORT=8001 bash geo_edit/scripts/run_inference.sh       # tweak vLLM
+# USE_TOOLS=direct bash geo_edit/scripts/run_inference.sh               # skip tool calls
 ```
 
-### 3 ─ Score outputs (CPU only)
+### Score outputs (CPU only)
 
 ```bash
 bash geo_edit/scripts/run_eval.sh
@@ -196,11 +198,6 @@ bash geo_edit/scripts/run_eval.sh
 Raw inference outputs land in `./outputs/eval_results/<dataset>/<model_name>/`;
 per-dataset accuracy + summary go to `./outputs/eval_output/<dataset>/<model_name>/`.
 
-> **Single-node alternative**: set `DP_SIZE=4` on the inference script
-> to leave 4 GPUs free, then run `CUDA_VISIBLE_DEVICES=0,1,2,3 bash
-> train_tool_server/scripts/launch_tool_server.sh` on the same node before
-> `CUDA_VISIBLE_DEVICES=4,5,6,7 DP_SIZE=4 bash geo_edit/scripts/run_inference.sh`.
-
 ## SFT Training
 
 ### Download — base VLM + SFT data
@@ -211,6 +208,11 @@ hf download <your-org>/PERIA-Models \
     --include "Qwen3-VL-8B-Thinking/*" \
     --local-dir ./pedia_model
 
+# If <your-org>/PERIA-Models does not ship Qwen3-VL-8B-Thinking, download it
+# separately (fill in <upstream-org> with the actual source repo):
+# hf download <upstream-org>/Qwen3-VL-8B-Thinking \
+#     --local-dir ./pedia_model/Qwen3-VL-8B-Thinking
+
 # SFT training data (train.json + images/)
 hf download <your-org>/PERIA-Data --repo-type dataset \
     --include "pedia_sft_v1/*" \
@@ -220,7 +222,7 @@ hf download <your-org>/PERIA-Data --repo-type dataset \
 ### Env setup — `peria-sft` (torch 2.8 + transformers 4.57.1)
 
 ```bash
-conda create -n peria-sft python=3.12 -y
+conda create -n peria-sft python=3.11 -y
 conda activate peria-sft
 cd llamafactory && pip install -r requirements.txt && cd ..
 ```
@@ -242,84 +244,64 @@ Hyper-parameters and dataset paths live in `llamafactory/configs/pedia_sft_v1.ya
 
 ## RL Training
 
-RL fine-tunes the SFT checkpoint with **OR-GIGPO** against the tool server.
-**RL requires at least two 8-GPU nodes** — one dedicated to the tool server
-(GPU-heavy: PaddleOCR-VL replicas + SAM 3.1 + Grounding-DINO) and one running
-the training loop. The two cannot share a node without OOM.
+RL fine-tunes the SFT checkpoint with **OR-GIGPO** against the HTTP tool
+server. **Two 8-GPU nodes minimum** — Node A runs the tool server, Node B
+runs the training loop. They cannot share a node (PaddleOCR-VL replicas +
+SAM 3.1 + Grounding-DINO + the training-loop vLLM all want full 8 GPUs).
+The two nodes run **different conda envs**: Node A uses `peria-tools`
+(torch ≥ 2.10 + vllm 0.17), Node B uses `peria-rl` (torch 2.8 + vllm 0.11).
 
-### Download — SFT checkpoint + RL data + tool backends
+### Download (both nodes need access to the same paths)
 
 ```bash
-# SFT checkpoint (RL starting point) + 3 tool backends (skip the tool
-# globs if you already downloaded them in Evaluation).
 hf download <your-org>/PERIA-Models \
     --include "pedia_8b_SFT_v1/*" "PaddleOCR-VL-1.5/*" "sam3.1/*" "grounding-dino-base/*" \
     --local-dir ./pedia_model
 
-# RL training data (train.parquet + val.parquet + images/)
 hf download <your-org>/PERIA-Data --repo-type dataset \
     --include "pedia_rl_v1/*" \
     --local-dir ./pedia_data
 ```
 
-### Prerequisites
-
-1. SFT checkpoint at `./pedia_model/pedia_8b_SFT_v1/` (download above or
-   train via [SFT Training](#sft-training)).
-2. RL data at `./pedia_data/pedia_rl_v1/{train,val}.parquet`.
-3. Tool models under `./pedia_model/` (PaddleOCR-VL-1.5, sam3.1, grounding-dino-base).
-
-### Minimum setup — 1 tool node + 1 training node
-
-**Node A — tool server** (uses `peria-tools` from Evaluation):
+### Node A — tool server (`peria-tools` env)
 
 ```bash
+conda create -n peria-tools python=3.11 -y
 conda activate peria-tools
-unset ROCR_VISIBLE_DEVICES
-ray start --head --port=6379 --num-gpus=8 --resources='{"tool_agent": 8}'
-bash train_tool_server/scripts/launch_tool_server.sh
+cd train_tool_server && pip install -r requirements.txt && cd ..
 
-# Take note of this node's reachable IP for node B
-TOOL_SERVER_IP=$(hostname -I | awk '{print $1}')
-echo "TOOL_SERVER_URL=http://${TOOL_SERVER_IP}:30888/get_observation"
+bash train_tool_server/scripts/launch_tool_server.sh
+echo "TOOL_SERVER_URL=http://$(hostname -I | awk '{print $1}'):30888/get_observation"
 ```
 
-**Node B — RL training:**
+### Node B — RL training (`peria-rl` env)
+
+See [`verl-tool/requirements.txt`](file:///storage/openpsi/users/lichangye.lcy/antoinegg1/AReaL/verl-tool/requirements.txt)
+header for the full install procedure (flash-attn ABI rebuild, deep_ep /
+deep_gemm uninstall, pyext caveat, data-tar extraction). One-step happy
+path:
 
 ```bash
-# Env setup — peria-rl (torch 2.8 + vllm 0.11 + flash-attn 2.7.4)
-conda create -n peria-rl python=3.12 -y
+conda create -n peria-rl python=3.11 -y
 conda activate peria-rl
 unset ROCR_VISIBLE_DEVICES
 cd verl-tool
 TORCH_CUDA_ARCH_LIST="8.9" MAX_JOBS=48 NVCC_THREADS=4 \
-    pip install -r requirements.txt
+    pip install --no-build-isolation -r requirements.txt
 pip uninstall -y deep_ep deep_gemm 2>/dev/null || true
 cd ..
 
-# Kick off training, pointing at node A's tool server
 TOOL_SERVER_URL=http://<node-a-ip>:30888/get_observation \
     bash verl-tool/examples/train/geo_edit/run_pedia_rl_v1_singlenode.sh
 ```
 
-Outputs land under `./outputs/mixed_rl/`.
-
-The reward manager can optionally call an LLM judge for trajectory rewards.
-This is opt-in via `JUDGE_API_KEY`; `JUDGE_API_BASE` defaults to OpenAI's
-official endpoint, so for OpenAI you only need the key:
-
-```bash
-export JUDGE_API_KEY=<your-openai-key>
-# export JUDGE_API_BASE=<custom-endpoint>     # only for non-OpenAI providers
-TOOL_SERVER_URL=http://<node-a-ip>:30888/get_observation \
-    bash verl-tool/examples/train/geo_edit/run_pedia_rl_v1_singlenode.sh
-```
+Outputs land under `./outputs/mixed_rl/`. Optional: `export JUDGE_API_KEY=...`
+to enable the LLM-judge reward path
+(`JUDGE_API_BASE` defaults to OpenAI's endpoint).
 
 ### Larger multi-node training
 
-For scaling beyond a single training node (e.g. 4 × 8 GPU + tool node), we also
-provide `run_pedia_rl_v1_multinode.sh` and the matching
-`ray_start_{head,worker}.sh` helpers under
+`run_pedia_rl_v1_multinode.sh` + `ray_start_{head,worker}.sh` under
 `verl-tool/examples/train/geo_edit/`.
 
 ## SFT Data Synthesis

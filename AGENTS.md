@@ -12,9 +12,9 @@
 - **Naming gotcha**: project is **PERIA**, on-disk prefix stays `pedia_*`
   (model dirs, data dirs, training scripts: `run_pedia_rl_*`). Conda envs use
   `peria-*`. Don't "fix" by renaming — many configs would break.
-- **Runtime**: 3 mutually-incompatible conda envs, Python 3.12, CUDA 12.8 via
-  `nvidia-*` pip wheels. Singularity sif is legacy; don't suggest it for new
-  work.
+- **Runtime**: 3 mutually-incompatible conda envs, Python 3.11 (3.12 also OK),
+  CUDA 12.8 / 12.9 via `nvidia-*` pip wheels. Singularity sif is legacy; don't
+  suggest it for new work.
 - **State paths** (HARD RULE): `./pedia_model/`, `./pedia_data/`,
   `./outputs/{mixed_rl,eval_results,eval_output,eval_logs,trajectories}/`.
   NEVER hard-code absolute paths. Override base dirs via `PEDIA_MODEL` /
@@ -221,7 +221,10 @@ python -m geo_edit.data_preprocess.convert_trajectory_to_sft \
 5. **`_AREAL_ROOT` post-flatten**: in
    `train_tool_server/train_tool_server/tools/geo_edit_base.py`, uses **3
    `..`** levels (not 4). Don't reintroduce the 4-level assumption when
-   refactoring tool paths.
+   refactoring tool paths. If the file drifts back to 4 `..`, the 6 CPU
+   function tools (`crop`, `label`, `draw_line`, `draw_path`, `bbox`,
+   `highlight`) all silently fail to load with "Function tool file not found"
+   in the agent log — restore to 3 `..`.
 
 6. **PaddleOCR-VL `num_replicas: 2`** in
    `geo_edit/tool_definitions/agents/paddleocr_tool.py`. Earlier was 6.

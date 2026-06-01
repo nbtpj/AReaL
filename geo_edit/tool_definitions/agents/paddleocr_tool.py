@@ -15,9 +15,11 @@ logger = setup_logger(__name__)
 # PaddleOCR doesn't need a system prompt (not a language model)
 SYSTEM_PROMPT = ""
 
+_PEDIA_MODEL = os.environ.get("PEDIA_MODEL", "./pedia_model")
+
 # Model configuration
 agent_config = {
-    "model_name_or_path": "./pedia_model/PaddleOCR-VL-1.5",
+    "model_name_or_path": f"{_PEDIA_MODEL}/PaddleOCR-VL-1.5",
     "max_model_len": 8192,
     "gpu_memory_utilization": 0.8,
     "temperature": 0.1,
