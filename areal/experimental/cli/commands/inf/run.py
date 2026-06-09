@@ -152,6 +152,10 @@ def _resolve_provider_api_key(args: argparse.Namespace) -> str:
 
 
 def _refuse_or_replace(name: str, force: bool) -> None:
+    from areal.experimental.cli.commands.inf.gateway_client import (
+        GatewayClient,
+        GatewayUnreachable,
+    )
     from areal.experimental.cli.commands.inf.launcher import kill_pids
     from areal.experimental.cli.commands.inf.state import (
         ServiceModels,
@@ -171,14 +175,33 @@ def _refuse_or_replace(name: str, force: bool) -> None:
         p.unlink()
         return
 
-    alive = gateway_alive(existing) or router_alive(existing)
-    if alive and not force:
+    pid_says_alive = gateway_alive(existing) or router_alive(existing)
+    healthy = False
+    if pid_says_alive:
+        # Confirm via HTTP — PIDs can be reused after a crash; only a real
+        # /health response means the gateway is actually serving.
+        try:
+            GatewayClient(
+                existing.gateway_url, admin_api_key=existing.admin_api_key,
+                timeout=1.0,
+            ).health()
+            healthy = True
+        except GatewayUnreachable:
+            healthy = False
+
+    if healthy and not force:
         raise SystemExit(
             f"Service {name!r} is already running "
             f"(gateway pid={existing.gateway_pid}, router pid={existing.router_pid}). "
             f"Use --force to replace it, or `areal inf stop {name}` first."
         )
-    if alive:
+    if not healthy and pid_says_alive:
+        logger.warning(
+            "Service %r has live pids (gateway=%d, router=%d) but gateway "
+            "is unreachable; treating as stale and reclaiming.",
+            name, existing.gateway_pid, existing.router_pid,
+        )
+    if healthy or pid_says_alive:
         # Also kill any tracked model workers from the previous incarnation.
         worker_pids: list[int] = []
         mp = models_state_path(name)
@@ -265,7 +288,8 @@ def _register_external_inline(
 
 
 def _register_internal_inline(
-    *, args: argparse.Namespace, service_name: str, gateway_url: str, log_dir: Path
+    *, args: argparse.Namespace, service_name: str,
+    gateway_url: str, router_url: str, log_dir: Path,
 ) -> None:
     from areal.experimental.cli.commands.inf.register_helper import (
         InternalRegisterArgs,
@@ -296,6 +320,7 @@ def _register_internal_inline(
             engine_max_tokens=args.engine_max_tokens,
         ),
         gateway_url=gateway_url,
+        router_url=router_url,
     )
 
     models = ServiceModels.load(service_name)
@@ -412,7 +437,9 @@ def _handle(args: argparse.Namespace) -> int:
             else:
                 _register_internal_inline(
                     args=args, service_name=service,
-                    gateway_url=state.gateway_url, log_dir=logs,
+                    gateway_url=state.gateway_url,
+                    router_url=state.router_url,
+                    log_dir=logs,
                 )
         except SystemExit:
             kill_pids([gateway_pid, router_pid], grace_s=5.0)

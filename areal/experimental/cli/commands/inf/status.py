@@ -28,7 +28,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--service", default=None, help="Service name (defaults to current).")
+    p.add_argument(
+        "name", nargs="?", default=None,
+        help="Service instance name (defaults to current).",
+    )
+    p.add_argument(
+        "--service", default=None, dest="service_flag", help=argparse.SUPPRESS,
+    )
     p.add_argument("--watch", action="store_true", help="Refresh until interrupted.")
     p.add_argument("--interval", type=float, default=2.0)
     p.add_argument("--json", action="store_true", dest="as_json")
@@ -139,7 +145,7 @@ def _print_table(snap: dict) -> None:
 def _handle(args: argparse.Namespace) -> int:
     from areal.experimental.cli.commands.inf.state import resolve_service
 
-    name = resolve_service(args.service)
+    name = resolve_service(args.name or args.service_flag)
     try:
         if not args.watch:
             snap = _collect(name)

@@ -239,9 +239,13 @@ class InternalRegisterResult:
 
 
 def register_internal_model(
-    args: InternalRegisterArgs, *, gateway_url: str
+    args: InternalRegisterArgs, *, gateway_url: str, router_url: str
 ) -> InternalRegisterResult:
     """Spawn N sglang/vllm + N data-proxy + register with gateway.
+
+    Each data-proxy is also POSTed to the router's ``/register`` endpoint so
+    the worker pool is non-empty when chat traffic arrives — otherwise the
+    router answers with ``503 No registered workers``.
 
     On any failure, kills everything spawned so far and re-raises.
     """
@@ -249,6 +253,7 @@ def register_internal_model(
         GatewayClient,
         GatewayHTTPError,
         GatewayUnreachable,
+        RouterClient,
     )
 
     spec = parse_backend_spec(args.backend_spec)
@@ -339,7 +344,24 @@ def register_internal_model(
                 what=f"data-proxy {replica}",
             )
 
-        # Register with gateway
+        # Each data-proxy must self-register into the router's worker pool
+        # (the router doesn't auto-discover them and `/register_model` only
+        # touches the model registry).  Without this, /v1/chat/completions
+        # returns 503 "No registered workers".
+        router_client = RouterClient(
+            router_url, admin_api_key=args.admin_api_key, timeout=10.0
+        )
+        for addr in proxy_addrs:
+            try:
+                router_client.register_worker(addr)
+                logger.info("Registered worker %s with router", addr)
+            except (GatewayUnreachable, GatewayHTTPError) as e:
+                raise SystemExit(
+                    f"Failed to register data-proxy {addr} with router at "
+                    f"{router_url}: {e}"
+                ) from e
+
+        # Register with gateway (model -> data_proxy_addrs mapping)
         client = GatewayClient(gateway_url, admin_api_key=args.admin_api_key, timeout=15.0)
         payload = {
             "model": args.model_name,

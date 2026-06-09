@@ -33,8 +33,12 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--service", default=None,
+        "name", nargs="?", default=None,
         help="Service instance name (defaults to current).",
+    )
+    p.add_argument(
+        "--service", default=None, dest="service_flag",
+        help=argparse.SUPPRESS,  # legacy alias for `name`; kept for back-compat
     )
     p.add_argument(
         "--grace-period", type=float, default=10.0,
@@ -68,7 +72,7 @@ def _handle(args: argparse.Namespace) -> int:
         set_current_service,
     )
 
-    name = resolve_service(args.service)
+    name = resolve_service(args.name or args.service_flag)
 
     try:
         state = ServiceState.load(name)

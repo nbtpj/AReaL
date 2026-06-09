@@ -24,7 +24,13 @@ def add_parser(subparsers: argparse._SubParsersAction) -> None:
         description=_DESCRIPTION,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--service", default=None, help="Service name (defaults to current).")
+    p.add_argument(
+        "name", nargs="?", default=None,
+        help="Service instance name (defaults to current).",
+    )
+    p.add_argument(
+        "--service", default=None, dest="service_flag", help=argparse.SUPPRESS,
+    )
     p.add_argument(
         "--component", default="gateway",
         help="One of `gateway`, `router`, or a model name.  Becomes "
@@ -41,7 +47,7 @@ def _handle(args: argparse.Namespace) -> int:
         service_logs_dir,
     )
 
-    name = resolve_service(args.service)
+    name = resolve_service(args.name or args.service_flag)
     log_dir = service_logs_dir(name)
     log_file = log_dir / f"{args.component}.log"
     if not log_file.exists():

@@ -92,3 +92,56 @@ class GatewayClient:
             json_body={"model": model},
             admin=True,
         )
+
+
+class RouterClient:
+    """Direct HTTP client for the router (for worker registration).
+
+    The router's worker pool is populated by ``POST /register {worker_addr}``;
+    nothing in the data-proxy or gateway calls this for us, so the CLI does
+    it explicitly when it spawns model backends.
+    """
+
+    def __init__(
+        self, base_url: str, *, admin_api_key: str | None = None, timeout: float = 5.0
+    ):
+        self.base_url = base_url.rstrip("/")
+        self.admin_api_key = admin_api_key
+        self.timeout = timeout
+
+    def register_worker(self, worker_addr: str) -> dict:
+        url = f"{self.base_url}/register"
+        body = json.dumps({"worker_addr": worker_addr}).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.admin_api_key:
+            headers["Authorization"] = f"Bearer {self.admin_api_key}"
+        req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                payload = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            raise GatewayHTTPError(e.code, e.read().decode("utf-8", errors="replace"))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise GatewayUnreachable(str(e)) from e
+        return json.loads(payload) if payload else {}
+
+    def unregister_worker(self, worker_addr: str | None = None, worker_id: str | None = None) -> dict:
+        url = f"{self.base_url}/unregister"
+        body_dict = {}
+        if worker_addr:
+            body_dict["worker_addr"] = worker_addr
+        if worker_id:
+            body_dict["worker_id"] = worker_id
+        body = json.dumps(body_dict).encode("utf-8")
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if self.admin_api_key:
+            headers["Authorization"] = f"Bearer {self.admin_api_key}"
+        req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                payload = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            raise GatewayHTTPError(e.code, e.read().decode("utf-8", errors="replace"))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            raise GatewayUnreachable(str(e)) from e
+        return json.loads(payload) if payload else {}
