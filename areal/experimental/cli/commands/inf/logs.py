@@ -2,64 +2,52 @@
 
 """``areal inf logs`` — tail gateway / router / model logs.
 
-Logs live under ``~/.areal/inf/logs/<service>/<component>.log``.  Phase 1
-ships ``gateway`` and ``router``; phase 3 will add ``<model-name>`` files
-when internal models are spawned.
+Logs live under ``~/.areal/inf/logs/<service>/<component>.log``.
 """
 
 from __future__ import annotations
 
-import argparse
 import os
-import sys
 
+import click
+
+from areal.experimental.cli.commands.inf import inf
 from areal.utils.logging import getLogger
 
 logger = getLogger("InfCli")
 
 
-_DESCRIPTION = __doc__
+@inf.command(name="logs", help="Tail gateway / router / model logs.")
+@click.argument("name", required=False)
+@click.option(
+    "--component",
+    default="gateway",
+    help="One of `gateway`, `router`, or a model name. "
+    "Becomes `<component>.log` under the service log dir.",
+)
+@click.option("-f", "--follow", is_flag=True, help="Stream new lines.")
+@click.option("-n", "--lines", type=int, default=200)
+def logs(name: str | None, component: str, follow: bool, lines: int) -> None:
+    raise SystemExit(_do_logs(name, component, follow, lines) or 0)
 
 
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "logs",
-        help="Tail gateway / router / model logs.",
-        description=_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument(
-        "name", nargs="?", default=None,
-        help="Service instance name (defaults to current).",
-    )
-    p.add_argument(
-        "--service", default=None, dest="service_flag", help=argparse.SUPPRESS,
-    )
-    p.add_argument(
-        "--component", default="gateway",
-        help="One of `gateway`, `router`, or a model name.  Becomes "
-             "`<component>.log` under the service log dir.",
-    )
-    p.add_argument("-f", "--follow", action="store_true", help="Stream new lines.")
-    p.add_argument("-n", "--lines", type=int, default=200)
-    p.set_defaults(func=_handle)
-
-
-def _handle(args: argparse.Namespace) -> int:
+def _do_logs(
+    name_arg: str | None, component: str, follow: bool, lines: int
+) -> int:
     from areal.experimental.cli.commands.inf.state import (
         resolve_service,
         service_logs_dir,
     )
 
-    name = resolve_service(args.name or args.service_flag)
+    name = resolve_service(name_arg)
     log_dir = service_logs_dir(name)
-    log_file = log_dir / f"{args.component}.log"
+    log_file = log_dir / f"{component}.log"
     if not log_file.exists():
-        logger.error("No %s.log at %s.", args.component, log_file)
+        logger.error("No %s.log at %s.", component, log_file)
         return 1
 
-    cmd = ["tail", f"-n{args.lines}"]
-    if args.follow:
+    cmd = ["tail", f"-n{lines}"]
+    if follow:
         cmd.append("-F")
     cmd.append(str(log_file))
     os.execvp(cmd[0], cmd)

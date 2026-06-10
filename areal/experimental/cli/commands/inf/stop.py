@@ -3,59 +3,48 @@
 """``areal inf stop`` — stop a running inference service.
 
 Sends SIGTERM to the gateway, the router, and any tracked model worker
-PIDs (data proxies + inference servers, populated in phase 3).  After the
-grace period, escalates to SIGKILL.  State files are removed unless
-``--keep-state`` is passed.
-
-Alias: ``areal inf destroy`` (later — keeping the alias spec for design
-reference).
+PIDs (data proxies + inference servers, populated when an internal model
+is registered).  After the grace period, escalates to SIGKILL.  State
+files are removed unless ``--keep-state`` is passed.
 """
 
 from __future__ import annotations
 
-import argparse
-import sys
 import time
 
+import click
+
+from areal.experimental.cli.commands.inf import inf
 from areal.utils.logging import getLogger
 
 logger = getLogger("InfCli")
 
 
-_DESCRIPTION = __doc__
+@inf.command(name="stop", help="Stop a running inference service.")
+@click.argument("name", required=False)
+@click.option(
+    "--grace-period",
+    type=float,
+    default=10.0,
+    help="Seconds to wait before escalating to SIGKILL.",
+)
+@click.option(
+    "--keep-state",
+    is_flag=True,
+    help="Keep state files after shutdown (debugging).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Skip confirmations; reserved for future interactive prompts.",
+)
+def stop(name: str | None, grace_period: float, keep_state: bool, force: bool) -> None:
+    raise SystemExit(_do_stop(name, grace_period, keep_state, force) or 0)
 
 
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "stop",
-        help="Stop a running inference service.",
-        description=_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument(
-        "name", nargs="?", default=None,
-        help="Service instance name (defaults to current).",
-    )
-    p.add_argument(
-        "--service", default=None, dest="service_flag",
-        help=argparse.SUPPRESS,  # legacy alias for `name`; kept for back-compat
-    )
-    p.add_argument(
-        "--grace-period", type=float, default=10.0,
-        help="Seconds to wait before escalating to SIGKILL.",
-    )
-    p.add_argument(
-        "--keep-state", action="store_true",
-        help="Keep state files after shutdown (debugging).",
-    )
-    p.add_argument(
-        "--force", action="store_true",
-        help="Skip confirmations; reserved for future interactive prompts.",
-    )
-    p.set_defaults(func=_handle)
-
-
-def _handle(args: argparse.Namespace) -> int:
+def _do_stop(
+    name_arg: str | None, grace_period: float, keep_state: bool, force: bool
+) -> int:
     from areal.experimental.cli.commands.inf.gateway_client import (
         GatewayClient,
         GatewayUnreachable,
@@ -64,15 +53,15 @@ def _handle(args: argparse.Namespace) -> int:
     from areal.experimental.cli.commands.inf.state import (
         ServiceModels,
         ServiceState,
-        get_current_service,
         gateway_alive,
+        get_current_service,
         models_state_path,
         resolve_service,
         router_alive,
         set_current_service,
     )
 
-    name = resolve_service(args.name or args.service_flag)
+    name = resolve_service(name_arg)
 
     try:
         state = ServiceState.load(name)
@@ -81,8 +70,6 @@ def _handle(args: argparse.Namespace) -> int:
         return 1
 
     pids: list[int] = [state.gateway_pid, state.router_pid]
-
-    # Pull any tracked model worker pids so we kill them in one sweep.
     models_path = models_state_path(name)
     if models_path.exists():
         sm = ServiceModels.load(name)
@@ -102,11 +89,10 @@ def _handle(args: argparse.Namespace) -> int:
             "Stopping service %r: gateway=%d, router=%d ...",
             name, state.gateway_pid, state.router_pid,
         )
-        kill_pids(pids, grace_s=args.grace_period)
+        kill_pids(pids, grace_s=grace_period)
 
-        # Best-effort: confirm gateway /health stops responding within a few seconds.
         client = GatewayClient(state.gateway_url, timeout=1.0)
-        deadline = time.time() + min(5.0, args.grace_period)
+        deadline = time.time() + min(5.0, grace_period)
         while time.time() < deadline:
             try:
                 client.health()
@@ -114,7 +100,7 @@ def _handle(args: argparse.Namespace) -> int:
             except GatewayUnreachable:
                 break
 
-    if not args.keep_state:
+    if not keep_state:
         state.remove()
         if models_path.exists():
             models_path.unlink()

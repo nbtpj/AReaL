@@ -186,11 +186,12 @@ sandbox = [
 # Minimal extra for the lightweight `areal` CLI (login-node install). The CLI
 # must NOT pull in torch / transformers / sglang / vllm / ray / megatron / ...;
 # the lightness guard test in `tests/experimental/test_cli_lightness.py`
-# enforces this invariant. The CLI only depends on PyYAML (to peek at config
-# files for driver / scheduler resolution) and colorlog (for the project's
+# enforces this invariant. The CLI only depends on click (parser),
+# PyYAML (to peek at config files), and colorlog (for the project's
 # colored loggers).
 cli = [
     "PyYAML",
+    "click>=8.1",
     "colorlog",
 ]
 

@@ -32,28 +32,22 @@ State lives under ``~/.areal/inf/``; see ``state.py`` for layout.
 
 from __future__ import annotations
 
-import argparse
+import click
 
 
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "inf",
-        help="Manage inference services and models.",
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    sub = p.add_subparsers(dest="verb", required=True, metavar="VERB")
+@click.group(help="Manage inference services and models.")
+def inf() -> None:
+    pass
 
-    from areal.experimental.cli.commands.inf import (
-        logs as cmd_logs,
-        ps as cmd_ps,
-        run as cmd_run,
-        status as cmd_status,
-        stop as cmd_stop,
-    )
 
-    cmd_run.add_parser(sub)
-    cmd_stop.add_parser(sub)
-    cmd_status.add_parser(sub)
-    cmd_ps.add_parser(sub)
-    cmd_logs.add_parser(sub)
+# Registering verbs by importing their modules — each imports `inf`
+# above and attaches itself via ``@inf.command(...)``.  Keep this at
+# the bottom so ``inf`` is fully bound by the time the verbs run their
+# decorators.
+from areal.experimental.cli.commands.inf import (  # noqa: E402,F401
+    logs,
+    ps,
+    run,
+    status,
+    stop,
+)

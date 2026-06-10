@@ -2,47 +2,31 @@
 
 """``areal inf status`` — health for one service and its components.
 
-Composes from local state + gateway HTTP per design 10.3:
-
-  * gateway ``/health`` — liveness + router_addr
-  * gateway ``/models`` — registered model list
-  * local state files — pids, addrs
-  * pid_alive — confirms tracked processes are still running
+Composed from local state + gateway HTTP — no aggregated status endpoint
+on the gateway.
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 import time
 
+import click
+
+from areal.experimental.cli.commands.inf import inf
 from areal.utils.logging import getLogger
 
 logger = getLogger("InfCli")
 
 
-_DESCRIPTION = __doc__
-
-
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "status",
-        help="Show service / component health.",
-        description=_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument(
-        "name", nargs="?", default=None,
-        help="Service instance name (defaults to current).",
-    )
-    p.add_argument(
-        "--service", default=None, dest="service_flag", help=argparse.SUPPRESS,
-    )
-    p.add_argument("--watch", action="store_true", help="Refresh until interrupted.")
-    p.add_argument("--interval", type=float, default=2.0)
-    p.add_argument("--json", action="store_true", dest="as_json")
-    p.set_defaults(func=_handle)
+@inf.command(name="status", help="Show service / component health.")
+@click.argument("name", required=False)
+@click.option("--watch", is_flag=True, help="Refresh until interrupted.")
+@click.option("--interval", type=float, default=2.0)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def status(name: str | None, watch: bool, interval: float, as_json: bool) -> None:
+    raise SystemExit(_do_status(name, watch, interval, as_json) or 0)
 
 
 def _collect(name: str) -> dict:
@@ -146,28 +130,29 @@ def _print_table(snap: dict) -> None:
         print(fmt.format(*r))
 
 
-def _handle(args: argparse.Namespace) -> int:
+def _do_status(
+    name_arg: str | None, watch: bool, interval: float, as_json: bool
+) -> int:
     from areal.experimental.cli.commands.inf.state import resolve_service
 
-    name = resolve_service(args.name or args.service_flag)
+    name = resolve_service(name_arg)
     try:
-        if not args.watch:
+        if not watch:
             snap = _collect(name)
-            if args.as_json:
+            if as_json:
                 print(json.dumps(snap, indent=2))
             else:
                 _print_table(snap)
             return 0
-        # --watch: clear-screen redraw; Ctrl-C to exit.
         while True:
             snap = _collect(name)
-            if args.as_json:
+            if as_json:
                 print(json.dumps(snap, indent=2))
             else:
                 sys.stdout.write("\033[2J\033[H")
                 _print_table(snap)
                 sys.stdout.flush()
-            time.sleep(args.interval)
+            time.sleep(interval)
     except FileNotFoundError:
         logger.error("No service named %r.", name)
         return 1

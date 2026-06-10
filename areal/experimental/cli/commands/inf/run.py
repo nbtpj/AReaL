@@ -10,147 +10,132 @@ a model was registered) under ``~/.areal/inf/``, and exits.
 There is **no supervisor process**.  Subsequent commands (``stop``,
 ``status``, ``ps``, ``logs``) reconcile via ``pid_alive`` + gateway
 ``/health``.
-
-Examples::
-
-    # empty service
-    areal inf run
-
-    # custom ports
-    areal inf run --service demo --gateway-port 18080 --router-port 18081
-
-    # inline external model
-    areal inf run --model gpt-4o --api-url https://api.openai.com/v1 \\
-                  --provider-api-key-env OPENAI_API_KEY
-
-    # inline internal model (spawns sglang locally)
-    areal inf run --model qwen3 --backend sglang:tp=2 \\
-                  --model-path Qwen/Qwen3-8B
 """
 
 from __future__ import annotations
 
-import argparse
 import os
-import sys
+import shlex
 import time
 from pathlib import Path
 
+import click
+
+from areal.experimental.cli.commands.inf import inf
 from areal.utils.logging import getLogger
 
 logger = getLogger("InfCli")
 
 
-_DESCRIPTION = __doc__
-
-
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "run",
-        help="Launch the inference service (detached).",
-        description=_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    # Service arguments (design 11.2)
-    p.add_argument("--service", default="default", help="Service instance name.")
-    p.add_argument("--gateway-host", default="127.0.0.1")
-    p.add_argument("--gateway-port", type=int, default=8080)
-    p.add_argument("--router-host", default="127.0.0.1")
-    p.add_argument("--router-port", type=int, default=8081)
-    p.add_argument("--admin-api-key", default="areal-admin-key")
-    p.add_argument(
-        "--routing-strategy", default="round_robin",
-        choices=["round_robin", "least_busy"],
-    )
-    p.add_argument("--poll-interval", type=float, default=5.0)
-    p.add_argument("--router-timeout", type=float, default=2.0)
-    p.add_argument("--forward-timeout", type=float, default=120.0)
-    p.add_argument(
-        "--log-level", default="info",
-        choices=["debug", "info", "warning", "error"],
-    )
-    p.add_argument("--launch-timeout", type=float, default=30.0)
-    p.add_argument(
-        "--config", type=Path, default=None,
-        help="Optional TOML override file merged over ~/.areal/inf/config.toml.",
-    )
-    p.add_argument(
-        "--force", action="store_true",
-        help="Stop an existing healthy service with the same name first.",
-    )
-
-    # Inline model registration (external if --api-url, else internal).
-    p.add_argument(
-        "--model", default=None,
-        help="Model name to register at startup. Triggers inline registration.",
-    )
-
-    # External-model flags
-    p.add_argument(
-        "--api-url", default=None,
-        help="External provider URL.  Presence marks the model as external.",
-    )
-    p.add_argument("--provider-api-key", default=None)
-    p.add_argument(
-        "--provider-api-key-env", default=None,
-        help="Name of an environment variable holding the provider API key.",
-    )
-    p.add_argument(
-        "--provider-model", default=None,
-        help="Upstream model name to send to the provider (defaults to --model).",
-    )
-
-    # Internal-model flags
-    p.add_argument(
-        "--backend", default=None,
-        help="Backend spec for internal model, e.g. 'sglang', 'sglang:tp=2', "
-             "'vllm:tp=2,dp=2'.  Required for internal models.",
-    )
-    p.add_argument(
-        "--model-path", default=None,
-        help="HuggingFace or local path to weights (internal models).",
-    )
-    p.add_argument(
-        "--tokenizer-path", default=None,
-        help="Tokenizer path for the data-proxy.  Defaults to --model-path.",
-    )
-    p.add_argument(
-        "--model-health-timeout", type=float, default=600.0,
-        help="Seconds to wait for an internal model server to become healthy.",
-    )
-    p.add_argument(
-        "--engine-args", default="",
-        help="Extra args forwarded verbatim to the sglang / vllm process. "
-             "Pass as a single shell-style string, e.g. "
-             "'--mem-fraction-static 0.85 --chunked-prefill-size 4096'. "
-             "See the sglang or vllm CLI docs for the full flag set.",
-    )
-    p.add_argument(
-        "--proxy-args", default="",
-        help="Extra args forwarded verbatim to the data-proxy process. "
-             "Pass as a single shell-style string, e.g. "
-             "'--tool-call-parser qwen --reasoning-parser qwen3 "
-             "--chat-template-type hf'. See "
-             "`python -m areal.experimental.inference_service.data_proxy --help` "
-             "for the full flag set.",
-    )
-
-    p.set_defaults(func=_handle)
+@inf.command(name="run", help="Launch the inference service (detached).")
+# Service flags
+@click.option("--service", default="default", help="Service instance name.")
+@click.option("--gateway-host", default="127.0.0.1")
+@click.option("--gateway-port", type=int, default=8080)
+@click.option("--router-host", default="127.0.0.1")
+@click.option("--router-port", type=int, default=8081)
+@click.option("--admin-api-key", default="areal-admin-key")
+@click.option(
+    "--routing-strategy",
+    type=click.Choice(["round_robin", "least_busy"]),
+    default="round_robin",
+)
+@click.option("--poll-interval", type=float, default=5.0)
+@click.option("--router-timeout", type=float, default=2.0)
+@click.option("--forward-timeout", type=float, default=120.0)
+@click.option(
+    "--log-level",
+    type=click.Choice(["debug", "info", "warning", "error"]),
+    default="info",
+)
+@click.option("--launch-timeout", type=float, default=30.0)
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Optional TOML override file merged over ~/.areal/inf/config.toml.",
+)
+@click.option(
+    "--force/--no-force",
+    default=False,
+    help="Stop an existing healthy service with the same name first.",
+)
+# Inline model registration
+@click.option(
+    "--model",
+    default=None,
+    help="Model name to register at startup. Triggers inline registration.",
+)
+# External-model flags
+@click.option(
+    "--api-url",
+    default=None,
+    help="External provider URL.  Presence marks the model as external.",
+)
+@click.option("--provider-api-key", default=None)
+@click.option(
+    "--provider-api-key-env",
+    default=None,
+    help="Name of an environment variable holding the provider API key.",
+)
+@click.option(
+    "--provider-model",
+    default=None,
+    help="Upstream model name to send to the provider (defaults to --model).",
+)
+# Internal-model flags
+@click.option(
+    "--backend",
+    default=None,
+    help="Backend spec for internal model, e.g. 'sglang', 'sglang:tp=2', "
+    "'vllm:tp=2,dp=2'.",
+)
+@click.option(
+    "--model-path",
+    default=None,
+    help="HuggingFace or local path to weights (internal models).",
+)
+@click.option(
+    "--tokenizer-path",
+    default=None,
+    help="Tokenizer path for the data-proxy.  Defaults to --model-path.",
+)
+@click.option(
+    "--model-health-timeout",
+    type=float,
+    default=600.0,
+    help="Seconds to wait for an internal model server to become healthy.",
+)
+@click.option(
+    "--engine-args",
+    default="",
+    help="Extra args forwarded verbatim to the sglang / vllm process. "
+    "Shell-style string, e.g. '--mem-fraction-static 0.85'.",
+)
+@click.option(
+    "--proxy-args",
+    default="",
+    help="Extra args forwarded verbatim to the data-proxy process. "
+    "Shell-style string, e.g. '--tool-call-parser qwen'.",
+)
+def run(**opts) -> None:
+    """Click entry point: delegate to _do_run, exit with its return code."""
+    raise SystemExit(_do_run(opts) or 0)
 
 
 # ---- helpers --------------------------------------------------------------
 
 
-def _resolve_provider_api_key(args: argparse.Namespace) -> str:
-    if args.provider_api_key:
-        return args.provider_api_key
-    if args.provider_api_key_env:
-        v = os.environ.get(args.provider_api_key_env)
+def _resolve_provider_api_key(opts: dict) -> str:
+    if opts["provider_api_key"]:
+        return opts["provider_api_key"]
+    env_name = opts["provider_api_key_env"]
+    if env_name:
+        v = os.environ.get(env_name)
         if not v:
             raise SystemExit(
-                f"--provider-api-key-env={args.provider_api_key_env!r} "
-                f"is not set in the environment."
+                f"--provider-api-key-env={env_name!r} is not set in the environment."
             )
         return v
     raise SystemExit(
@@ -186,11 +171,10 @@ def _refuse_or_replace(name: str, force: bool) -> None:
     pid_says_alive = gateway_alive(existing) or router_alive(existing)
     healthy = False
     if pid_says_alive:
-        # Confirm via HTTP — PIDs can be reused after a crash; only a real
-        # /health response means the gateway is actually serving.
         try:
             GatewayClient(
-                existing.gateway_url, admin_api_key=existing.admin_api_key,
+                existing.gateway_url,
+                admin_api_key=existing.admin_api_key,
                 timeout=1.0,
             ).health()
             healthy = True
@@ -207,10 +191,11 @@ def _refuse_or_replace(name: str, force: bool) -> None:
         logger.warning(
             "Service %r has live pids (gateway=%d, router=%d) but gateway "
             "is unreachable; treating as stale and reclaiming.",
-            name, existing.gateway_pid, existing.router_pid,
+            name,
+            existing.gateway_pid,
+            existing.router_pid,
         )
     if healthy or pid_says_alive:
-        # Also kill any tracked model workers from the previous incarnation.
         worker_pids: list[int] = []
         mp = models_state_path(name)
         if mp.exists():
@@ -250,45 +235,42 @@ def _wait_health(client, supervisor_pids: list[int], deadline: float) -> None:
 
 
 def _register_external_inline(
-    *, args: argparse.Namespace, service_name: str, gateway_url: str
+    *, opts: dict, service_name: str, gateway_url: str
 ) -> None:
     from areal.experimental.cli.commands.inf.gateway_client import (
         GatewayClient,
         GatewayHTTPError,
         GatewayUnreachable,
     )
-    from areal.experimental.cli.commands.inf.state import (
-        ModelState,
-        ServiceModels,
-    )
+    from areal.experimental.cli.commands.inf.state import ModelState, ServiceModels
 
-    api_key = _resolve_provider_api_key(args)
+    api_key = _resolve_provider_api_key(opts)
     payload = {
-        "model": args.model,
-        "url": args.api_url,
+        "model": opts["model"],
+        "url": opts["api_url"],
         "api_key": api_key,
         "data_proxy_addrs": [],
     }
-    if args.provider_model:
-        payload["provider_model"] = args.provider_model
+    if opts["provider_model"]:
+        payload["provider_model"] = opts["provider_model"]
 
     client = GatewayClient(
-        gateway_url, admin_api_key=args.admin_api_key, timeout=10.0
+        gateway_url, admin_api_key=opts["admin_api_key"], timeout=10.0
     )
     try:
         client.register_model(payload)
     except (GatewayUnreachable, GatewayHTTPError) as e:
         raise SystemExit(
-            f"Inline register of model {args.model!r} failed: {e}"
+            f"Inline register of model {opts['model']!r} failed: {e}"
         ) from e
 
     models = ServiceModels.load(service_name)
     models.add(
         ModelState(
-            name=args.model,
+            name=opts["model"],
             kind="external",
-            api_url=args.api_url,
-            provider_model=args.provider_model or args.model,
+            api_url=opts["api_url"],
+            provider_model=opts["provider_model"] or opts["model"],
             registered_at=time.time(),
         )
     )
@@ -296,7 +278,7 @@ def _register_external_inline(
 
 
 def _register_internal_inline(
-    *, args: argparse.Namespace, service_name: str,
+    *, opts: dict, service_name: str,
     gateway_url: str, router_url: str, log_dir: Path,
 ) -> None:
     from areal.experimental.cli.commands.inf.register_helper import (
@@ -305,25 +287,23 @@ def _register_internal_inline(
     )
     from areal.experimental.cli.commands.inf.state import ModelState, ServiceModels
 
-    import shlex
-
-    if not args.model_path:
+    if not opts["model_path"]:
         raise SystemExit(
             "--model-path is required for internal model registration."
         )
 
     result = register_internal_model(
         InternalRegisterArgs(
-            model_name=args.model,
-            backend_spec=args.backend,
-            model_path=args.model_path,
-            tokenizer_path=args.tokenizer_path or args.model_path,
+            model_name=opts["model"],
+            backend_spec=opts["backend"],
+            model_path=opts["model_path"],
+            tokenizer_path=opts["tokenizer_path"] or opts["model_path"],
             log_dir=log_dir,
-            admin_api_key=args.admin_api_key,
-            log_level=args.log_level,
-            health_timeout=args.model_health_timeout,
-            engine_extra_args=shlex.split(args.engine_args) if args.engine_args else [],
-            proxy_extra_args=shlex.split(args.proxy_args) if args.proxy_args else [],
+            admin_api_key=opts["admin_api_key"],
+            log_level=opts["log_level"],
+            health_timeout=opts["model_health_timeout"],
+            engine_extra_args=shlex.split(opts["engine_args"]) if opts["engine_args"] else [],
+            proxy_extra_args=shlex.split(opts["proxy_args"]) if opts["proxy_args"] else [],
         ),
         gateway_url=gateway_url,
         router_url=router_url,
@@ -332,9 +312,9 @@ def _register_internal_inline(
     models = ServiceModels.load(service_name)
     models.add(
         ModelState(
-            name=args.model,
+            name=opts["model"],
             kind="internal",
-            backend_spec=args.backend,
+            backend_spec=opts["backend"],
             data_proxy_addrs=result.data_proxy_addrs,
             inference_server_addrs=result.inference_server_addrs,
             worker_pids=result.worker_pids,
@@ -347,17 +327,17 @@ def _register_internal_inline(
 # ---- main entry ----------------------------------------------------------
 
 
-def _handle(args: argparse.Namespace) -> int:
+def _do_run(opts: dict) -> int:
     # Sanity-check model flags up front.
-    if args.api_url and not args.model:
+    if opts["api_url"] and not opts["model"]:
         raise SystemExit("--api-url requires --model.")
-    if args.backend and not args.model:
+    if opts["backend"] and not opts["model"]:
         raise SystemExit("--backend requires --model.")
-    if args.model and args.api_url and args.backend:
+    if opts["model"] and opts["api_url"] and opts["backend"]:
         raise SystemExit(
             "Specify either --api-url (external) OR --backend (internal), not both."
         )
-    if args.model and not (args.api_url or args.backend):
+    if opts["model"] and not (opts["api_url"] or opts["backend"]):
         raise SystemExit(
             "--model requires either --api-url <url> (external) or "
             "--backend <spec> --model-path <path> (internal)."
@@ -376,19 +356,19 @@ def _handle(args: argparse.Namespace) -> int:
         set_current_service,
     )
 
-    service = args.service
-    _refuse_or_replace(service, force=args.force)
+    service = opts["service"]
+    _refuse_or_replace(service, force=opts["force"])
 
     logs = service_logs_dir(service)
     logger.info("Starting service %r (logs: %s)", service, logs)
 
     router_pid = spawn_router(
-        host=args.router_host,
-        port=args.router_port,
-        admin_api_key=args.admin_api_key,
-        poll_interval=args.poll_interval,
-        routing_strategy=args.routing_strategy,
-        log_level=args.log_level,
+        host=opts["router_host"],
+        port=opts["router_port"],
+        admin_api_key=opts["admin_api_key"],
+        poll_interval=opts["poll_interval"],
+        routing_strategy=opts["routing_strategy"],
+        log_level=opts["log_level"],
         log_file=logs / "router.log",
     )
     logger.info("Spawned router pid=%d", router_pid)
@@ -396,53 +376,56 @@ def _handle(args: argparse.Namespace) -> int:
     time.sleep(0.3)
 
     gateway_pid = spawn_gateway(
-        host=args.gateway_host,
-        port=args.gateway_port,
-        admin_api_key=args.admin_api_key,
-        router_host=args.router_host,
-        router_port=args.router_port,
-        router_timeout=args.router_timeout,
-        forward_timeout=args.forward_timeout,
-        log_level=args.log_level,
+        host=opts["gateway_host"],
+        port=opts["gateway_port"],
+        admin_api_key=opts["admin_api_key"],
+        router_host=opts["router_host"],
+        router_port=opts["router_port"],
+        router_timeout=opts["router_timeout"],
+        forward_timeout=opts["forward_timeout"],
+        log_level=opts["log_level"],
         log_file=logs / "gateway.log",
     )
     logger.info("Spawned gateway pid=%d", gateway_pid)
 
     state = ServiceState(
         name=service,
-        gateway_host=args.gateway_host,
-        gateway_port=args.gateway_port,
-        router_host=args.router_host,
-        router_port=args.router_port,
+        gateway_host=opts["gateway_host"],
+        gateway_port=opts["gateway_port"],
+        router_host=opts["router_host"],
+        router_port=opts["router_port"],
         gateway_pid=gateway_pid,
         router_pid=router_pid,
-        admin_api_key=args.admin_api_key,
-        routing_strategy=args.routing_strategy,
-        log_level=args.log_level,
+        admin_api_key=opts["admin_api_key"],
+        routing_strategy=opts["routing_strategy"],
+        log_level=opts["log_level"],
         created_at=time.time(),
     )
 
     client = GatewayClient(
-        state.gateway_url, admin_api_key=args.admin_api_key, timeout=2.0
+        state.gateway_url, admin_api_key=opts["admin_api_key"], timeout=2.0
     )
     try:
-        _wait_health(client, [router_pid, gateway_pid],
-                     deadline=time.time() + args.launch_timeout)
+        _wait_health(
+            client,
+            [router_pid, gateway_pid],
+            deadline=time.time() + opts["launch_timeout"],
+        )
     except SystemExit:
         kill_pids([gateway_pid, router_pid], grace_s=5.0)
         raise
 
     state.save()
 
-    if args.model:
+    if opts["model"]:
         try:
-            if args.api_url:
+            if opts["api_url"]:
                 _register_external_inline(
-                    args=args, service_name=service, gateway_url=state.gateway_url
+                    opts=opts, service_name=service, gateway_url=state.gateway_url
                 )
             else:
                 _register_internal_inline(
-                    args=args, service_name=service,
+                    opts=opts, service_name=service,
                     gateway_url=state.gateway_url,
                     router_url=state.router_url,
                     log_dir=logs,
@@ -459,8 +442,8 @@ def _handle(args: argparse.Namespace) -> int:
     logger.info("  gateway: %s", state.gateway_url)
     logger.info("  router:  %s", state.router_url)
     logger.info("  pids:    gateway=%d, router=%d", gateway_pid, router_pid)
-    if args.model:
-        kind = "external" if args.api_url else f"internal ({args.backend})"
-        logger.info("  default model: %s (%s)", args.model, kind)
+    if opts["model"]:
+        kind = "external" if opts["api_url"] else f"internal ({opts['backend']})"
+        logger.info("  default model: %s (%s)", opts["model"], kind)
     logger.info("  log dir: %s", logs)
     return 0

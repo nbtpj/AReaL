@@ -4,35 +4,27 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-import sys
 import time
 
+import click
+
+from areal.experimental.cli.commands.inf import inf
 from areal.utils.logging import getLogger
 
 logger = getLogger("InfCli")
 
 
-_DESCRIPTION = __doc__
+@inf.command(name="ps", help="List locally tracked services.")
+@click.option(
+    "--all", "show_all", is_flag=True, help="Include stale/dead services."
+)
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON.")
+def ps(show_all: bool, as_json: bool) -> None:
+    raise SystemExit(_do_ps(show_all, as_json) or 0)
 
 
-def add_parser(subparsers: argparse._SubParsersAction) -> None:
-    p = subparsers.add_parser(
-        "ps",
-        help="List locally tracked services.",
-        description=_DESCRIPTION,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument(
-        "--all", action="store_true", dest="show_all",
-        help="Include stale/dead services.",
-    )
-    p.add_argument("--json", action="store_true", dest="as_json")
-    p.set_defaults(func=_handle)
-
-
-def _handle(args: argparse.Namespace) -> int:
+def _do_ps(show_all: bool, as_json: bool) -> int:
     from areal.experimental.cli.commands.inf.state import (
         ServiceModels,
         ServiceState,
@@ -47,8 +39,6 @@ def _handle(args: argparse.Namespace) -> int:
     now = time.time()
 
     for f in sorted(services_dir().glob("*.json")):
-        # The file stem encodes the service name (with sanitize_name applied
-        # only for special chars; for typical names it round-trips).
         try:
             name = f.stem
             state = ServiceState.load(name)
@@ -56,7 +46,7 @@ def _handle(args: argparse.Namespace) -> int:
             continue
 
         alive = gateway_alive(state) or router_alive(state)
-        if not alive and not args.show_all:
+        if not alive and not show_all:
             continue
 
         sm = ServiceModels.load(name)
@@ -73,13 +63,13 @@ def _handle(args: argparse.Namespace) -> int:
             }
         )
 
-    if args.as_json:
+    if as_json:
         print(json.dumps(entries, indent=2))
         return 0
 
     if not entries:
         msg = "No services."
-        if not args.show_all:
+        if not show_all:
             msg += "  (Add --all to include dead ones.)"
         logger.info("%s", msg)
         return 0
@@ -92,7 +82,8 @@ def _handle(args: argparse.Namespace) -> int:
             e["state"],
             e["gateway"],
             e["router"],
-            f"{e['models']}" + (f" (default={e['default_model']})" if e["default_model"] else ""),
+            f"{e['models']}"
+            + (f" (default={e['default_model']})" if e["default_model"] else ""),
             f"{e['age_s']}s",
         )
         for e in entries
