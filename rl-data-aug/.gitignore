@@ -1,0 +1,4 @@
+.venv/
+.humanize/
+__pycache__/
+*.pyc
