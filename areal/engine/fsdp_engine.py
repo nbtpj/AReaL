@@ -1889,18 +1889,13 @@ class FSDPEngine(TrainEngine):
             ]
             mb["use_cache"] = False
             padded_mb["use_cache"] = False
-            if (
-                is_qwen3_moe_model(self.model_config.model_type)
-                or is_qwen3_vl_model(self.model_config.model_type)
-                or is_qwen3_5_model(self.model_config.model_type)
-            ):
-                mb["attention_mask"] = None
-                padded_mb["attention_mask"] = None
-            else:
-                mb["attention_mask"] = dict(full_attention=None, sliding_attention=None)
-                padded_mb["attention_mask"] = dict(
-                    full_attention=None, sliding_attention=None
-                )
+            # Always use attention_mask=None for packed varlen batches.
+            # dict(full_attention=None, sliding_attention=None) was the pre-5.x
+            # transformers format; transformers 5.x checks attention_mask.ndim
+            # which fails on a dict.  cu_seqlens_q/k remain in inputs for FA2
+            # varlen kernels when flash_attn is available.
+            mb["attention_mask"] = None
+            padded_mb["attention_mask"] = None
             _prepare_multimodal_forward_inputs(mb, padded_mb)
         _drop_multimodal_payloads(mb_list.data)
         return mb_list
