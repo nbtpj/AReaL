@@ -170,7 +170,12 @@ def areal_run_scheduler_process(
 
     import psutil
     from sglang.srt.environ import envs
-    from sglang.srt.managers.scheduler import Scheduler, configure_scheduler
+    try:
+        from sglang.srt.managers.scheduler import Scheduler, configure_scheduler as _configure_sched_fn
+        _configure_sched_has_gpu_id = False
+    except ImportError:
+        from sglang.srt.managers.scheduler import Scheduler, configure_scheduler_process as _configure_sched_fn
+        _configure_sched_has_gpu_id = True
     from sglang.srt.observability.trace import (
         process_tracing_init,
         trace_set_thread_info,
@@ -191,21 +196,26 @@ def areal_run_scheduler_process(
     )
 
     logger = logging.getLogger(__name__)
-    dp_rank = configure_scheduler(
-        server_args, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank
-    )
-
-    kill_itself_when_parent_died()
-    parent_process = psutil.Process().parent()
-
-    # Set cpu affinity to this gpu process
-    if get_bool_env_var("SGLANG_SET_CPU_AFFINITY"):
-        set_gpu_proc_affinity(
-            server_args.pp_size, server_args.tp_size, server_args.nnodes, gpu_id
+    if _configure_sched_has_gpu_id:
+        # sglang >= 0.5.11: configure_scheduler_process(server_args, gpu_id, ...)
+        dp_rank = _configure_sched_fn(
+            server_args, gpu_id, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank
         )
-    numa_node = get_numa_node_if_available(server_args, gpu_id)
-    if numa_node is not None and not envs.SGLANG_NUMA_BIND_V2.get():
-        numa_bind_to_node(numa_node)
+    else:
+        # sglang 0.5.10: configure_scheduler(server_args, ...)
+        dp_rank = _configure_sched_fn(
+            server_args, tp_rank, attn_cp_rank, moe_dp_rank, moe_ep_rank, pp_rank, dp_rank
+        )
+        kill_itself_when_parent_died()
+        if get_bool_env_var("SGLANG_SET_CPU_AFFINITY"):
+            set_gpu_proc_affinity(
+                server_args.pp_size, server_args.tp_size, server_args.nnodes, gpu_id
+            )
+        numa_node = get_numa_node_if_available(server_args, gpu_id)
+        if numa_node is not None and not envs.SGLANG_NUMA_BIND_V2.get():
+            numa_bind_to_node(numa_node)
+
+    parent_process = psutil.Process().parent()
 
     # Set up tracing
     if server_args.enable_trace:
