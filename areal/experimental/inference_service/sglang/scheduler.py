@@ -17,6 +17,26 @@ from areal.infra.rpc.serialization import serialize_value
 RESULT_IPC_ENV = "AREAL_AWEX_RESULT_IPC"
 
 
+def _sched_tp_rank(s: Any) -> int:
+    """sglang 0.5.10: s.tp_rank; 0.5.11+: s.ps.tp_rank"""
+    ps = getattr(s, "ps", None)
+    return ps.tp_rank if ps is not None else s.tp_rank
+
+
+def _sched_dp_rank(s: Any) -> int | None:
+    """sglang 0.5.10: s.dp_rank; 0.5.11+: s.ps.dp_rank"""
+    ps = getattr(s, "ps", None)
+    if ps is not None:
+        return ps.dp_rank
+    return getattr(s, "dp_rank", None)
+
+
+def _sched_tp_size(s: Any) -> int:
+    """sglang 0.5.10: s.tp_size; 0.5.11+: s.ps.tp_size"""
+    ps = getattr(s, "ps", None)
+    return ps.tp_size if ps is not None else s.tp_size
+
+
 class AwexSchedulerBridge:
     """Compose awex weight-update capabilities onto a plain Scheduler instance.
 
@@ -41,8 +61,8 @@ class AwexSchedulerBridge:
         # duplicate/corrupted messages on the single PULL socket.
         if (
             result_ipc
-            and scheduler.tp_rank == 0
-            and (getattr(scheduler, "dp_rank", None) is None or scheduler.dp_rank == 0)
+            and _sched_tp_rank(scheduler) == 0
+            and (_sched_dp_rank(scheduler) is None or _sched_dp_rank(scheduler) == 0)
         ):
             ctx = zmq.Context(1)
             self._result_push = ctx.socket(zmq.PUSH)
@@ -89,8 +109,8 @@ class AwexSchedulerBridge:
         s = self._scheduler
 
         # All-gather across TP ranks so rank 0 returns aggregated metadata
-        if s.tp_size > 1:
-            gathered: list[list] = [[] for _ in range(s.tp_size)]
+        if _sched_tp_size(s) > 1:
+            gathered: list[list] = [[] for _ in range(_sched_tp_size(s))]
             dist.all_gather_object(gathered, local_meta, group=s.tp_cpu_group)
             all_meta: list = []
             for rank_meta in gathered:
@@ -115,7 +135,7 @@ class AwexSchedulerBridge:
         self, save_path: str, names: list[str] | None = None
     ) -> None:
         adapter = self._require_adapter()
-        if self._scheduler.tp_rank == 0:
+        if _sched_tp_rank(self._scheduler) == 0:
             adapter.save_parameters(save_path, names)
 
     def awex_randomize_parameters(self) -> None:
